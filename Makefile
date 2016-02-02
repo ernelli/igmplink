@@ -31,9 +31,11 @@ CXX:=$(TOOLCHAIN_DIR)/bin/$(IPSTB_ARCH)-c++
 CC:=$(TOOLCHAIN_DIR)/bin/$(IPSTB_ARCH)-gcc
 endif
 
+CXXFLAGS+=-std=c99
+
 BUILD:=build/$(IPSTB_ARCH)
 
-TARGET:=$(BUILD)/igmpclient
+TARGET:=$(BUILD)/igmplisten
 
 SRC:=src
 
@@ -53,7 +55,7 @@ dist: $(TARGET)
 	cp $(TARGET) /var/www/files
 
 $(BUILD)/%.o: $(SRC)/%.c
-	$(CC) -c $^ -o $@
+	$(CC) -c $^ -o $@ $(CXXFLAGS)
 
 $(TARGET): $(OBJS)
 	$(CXX) $(LDFLAGS) -o $@ $^  
