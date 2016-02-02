@@ -8,6 +8,9 @@
 #include<errno.h>
 #include<stdio.h>
 #include<string.h>
+#include<stdlib.h>
+#include<memory.h>
+#include<ctype.h>
 
 void hexdump(const unsigned char *data, int len) {
   int i;
@@ -48,7 +51,7 @@ void hexdump(const unsigned char *data, int len) {
 
 #define MAX_TIMERS 128
 
-typedef int (*callback_t)(void *);
+typedef void (*callback_t)(void *);
 
 typedef long long timestamp;
 
@@ -58,7 +61,7 @@ callback_t cb;
 };
 
 struct timer_t timers[MAX_TIMERS];
-
+int num_timers = 0;
 
 timestamp getCurrentTime() {
 struct timeval time;
@@ -68,7 +71,37 @@ return (timestamp)time.tv_sec*1000 + (timestamp)time.tv_usec/1000;
 }
 
 int setTimeout(callback_t cb, timestamp timeout) {
+  if(num_timers >= MAX_TIMERS) {
+    fprintf(stderr, "setTimeout failed, MAX_TIMERS: %d used\n", MAX_TIMERS);
+    exit(1);
+  }
 
+  if(timeout < 0) {
+    timeout = 0;
+  }
+
+  timestamp now = getCurrentTime();
+  
+  timestamp timeoutTime = now + timeout;
+  int i = 0;
+  while(i < num_timers && timers[i].time <= timeoutTime) {
+    i++;
+  }
+  
+  memmove(timers+i+1, timers+i, sizeof(timers[0])*(num_timers-i));
+  timers[i].time = timeoutTime;
+  timers[i].cb = cb;
+  num_timers++;
+
+
+  return i;
+}
+
+void dumpTimers() {
+  printf("num timers: %d\n", num_timers);
+  for(int i = 0; i < num_timers; i++) {
+    printf("timer: %d, timeout: %Ld, callback: %016Lx\n", i, timers[i].time, (long long)timers[i].cb);
+  }
 }
 
 
@@ -78,9 +111,12 @@ int main(int argc, char *argv[]) {
 
   printf("Create raw socket listen to igmp: 0x%04x\n", IPPROTO_IGMP);
 
-  printf("currTime: %Ld\n", getCurrentTime());
-  sleep(1);
-  printf("currTime: %Ld\n", getCurrentTime());
+  int cb(void *c) { printf("timer 3 kicked\n"); return len; }
+
+  setTimeout((void *)1, 400);
+  setTimeout((void *)2, 300);
+  setTimeout(cb, 900);
+  dumpTimers();
 
   int fd = socket(AF_INET, SOCK_RAW, IPPROTO_IGMP);
 
