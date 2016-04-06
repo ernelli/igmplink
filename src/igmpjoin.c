@@ -55,8 +55,8 @@ int len;
 int main(int argc, char *argv[]) {
   unsigned char buffer[2048];
   int port = 5555;
-  char *address = "239.16.16.202";
-  char *ifname = "eth1";
+  char *address = "239.16.16.1";
+  char *ifname = "eth0";
   int len;
   struct sockaddr_in mcaddr;
   int fd;
@@ -77,7 +77,9 @@ int main(int argc, char *argv[]) {
   
   if(fd > 0) {
     printf("got socket: %d\n", fd);
-    
+
+    bind(fd, (struct sockaddr *)&mcaddr, sizeof(mcaddr));    
+
 #ifdef MCAST_JOIN_GROUP
     socklen_t addrlen;
     struct group_req greq;
@@ -91,6 +93,9 @@ int main(int argc, char *argv[]) {
       fprintf(stderr, "Failed to join gruop: %s\n", strerror(errno));
       return 1;
     }
+
+    printf("group joined, wait for data\n");
+
 #else
     /*
     struct ip_mreq mreq;    
@@ -101,12 +106,17 @@ int main(int argc, char *argv[]) {
     */
 #endif
     while(1) {
+      printf("calling recv on socket\n");
+
       len = recv(fd, buffer, sizeof(buffer), 0);
       
       if(len > 0) {
         printf("got igmp packet:\n");
         hexdump(buffer, len);
-      } 
+      } else {
+        printf("recv returned, len: %d\n", len);
+        return 1;
+      }
     }
   } else {
     fprintf(stderr, "Failed to create socket: %s\n", strerror(errno));
