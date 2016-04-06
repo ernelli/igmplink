@@ -35,7 +35,7 @@ CXXFLAGS+=-std=c99
 
 BUILD:=build/$(IPSTB_ARCH)
 
-TARGET:=$(BUILD)/igmplisten
+TARGETS:=$(BUILD)/igmplisten $(BUILD)/igmpjoin
 
 SRC:=src
 
@@ -44,7 +44,7 @@ OBJS:=$(patsubst $(SRC)/%.c,$(BUILD)/%.o,$(C_FILES))
 
 .PHONY: dirs
 
-all: dirs $(TARGET)
+all: dirs $(TARGETS)
 
 dirs: $(BUILD)
 
@@ -57,8 +57,14 @@ dist: $(TARGET)
 $(BUILD)/%.o: $(SRC)/%.c
 	$(CC) -c $^ -o $@ $(CXXFLAGS)
 
-$(TARGET): $(OBJS)
-	$(CXX) $(LDFLAGS) -o $@ $^  
+$(BUILD)/igmplisten: $(OBJS)
+	$(CXX) $(LDFLAGS) -o $@ $(BUILD)/igmpclient.o
+
+$(BUILD)/igmpjoin: $(OBJS)
+	$(CXX) $(LDFLAGS) -o $@ $(BUILD)/igmpjoin.o
+
+#$(TARGETS): $(OBJS)
+#	$(CXX) $(LDFLAGS) -o $@ $^  
 
 info:
 	@echo ARCH: $(ARCH)

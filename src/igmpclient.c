@@ -141,10 +141,16 @@ int main(int argc, char *argv[]) {
     printf("timer %s kicked\n", (const char*)c); 
   }
 
+  void heartbeat(void *c) {
+    printf("heartbeat!\n");
+    setTimeout(heartbeat, 1000, NULL);
+  }
+
   setTimeout(cb, 400, "second");
   setTimeout(cb, 300, "first");
   setTimeout(cb, 900, "last");
 
+  setTimeout(heartbeat, 1000, NULL);
 
   int fd = socket(AF_INET, SOCK_RAW, IPPROTO_IGMP);
   printf("got socket: %d\n", fd);
@@ -157,8 +163,6 @@ int main(int argc, char *argv[]) {
 
     FD_ZERO(&rfds);
 
-    FD_SET(fd, &rfds);
-
     while(run) {
       _dt = _nextTimeout();
     
@@ -169,13 +173,15 @@ int main(int argc, char *argv[]) {
         tv.tv_usec = 1000*(_dt % 1000);
       } 
 
-      printf("select with timeout: %d %d\n", tv.tv_sec, tv.tv_usec);
+      printf("select with timeout: %d %d\n", (int)tv.tv_sec, (int)tv.tv_usec);
 
 
       FD_ZERO(&wfds);
       FD_ZERO(&efds);
 
 
+
+      FD_SET(fd, &rfds);
 
       int retval = select(fd+1, &rfds, &wfds, &efds, _dt > 0 ? &tv : NULL);
 
