@@ -54,7 +54,7 @@ int len;
 
 int main(int argc, char *argv[]) {
   unsigned char buffer[2048];
-  int port = 5055;
+  int port = 5555;
   char *address = "239.16.16.202";
   char *ifname = "eth1";
   int len;
@@ -68,24 +68,38 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "Invalid multicast address: %s, error: %s\n", address, strerror(errno));
     return 1;
   }
-  int mcsocket = socket(AF_INET, SOCK_DGRAM, 0);
-  if(mcsocket == -1) {
+
+  fd  = socket(AF_INET, SOCK_DGRAM, 0);
+  if(fd == -1) {
     fprintf(stderr, "Failed to create  multicast socket for address: %s, error: %s\n", address, strerror(errno));
     return 1;
   }
-
+  
   if(fd > 0) {
-    
     printf("got socket: %d\n", fd);
-
-    struct ip_mreq mreqn;
     
+#ifdef MCAST_JOIN_GROUP
+    socklen_t addrlen;
+    struct group_req greq;
+    
+    addrlen = sizeof(struct sockaddr_in);
+    
+    memset(&greq, 0, sizeof(greq));
+    memcpy(&greq.gr_group, &mcaddr, addrlen);
+    greq.gr_interface = if_nametoindex(ifname);
+    if (setsockopt(fd, IPPROTO_IP, MCAST_JOIN_GROUP, (char *)&greq, sizeof(greq)) < 0) {
+      fprintf(stderr, "Failed to join gruop: %s\n", strerror(errno));
+      return 1;
+    }
+#else
+    /*
+    struct ip_mreq mreq;    
+
     memset(&mreq, 0, sizeof(mreq));
-
-    memcpy(&mreq.imr_multiaddr, mcaddr, sizeof(mreq.imr_multiaddr));
-
-    setsockopt (fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq));    
-    
+    memcpy(&mreq.imr_multiaddr, &mcaddr, sizeof(mreq.imr_multiaddr));
+    setsockopt (fd, IPPROTO_IP, MCAST_JOIN_GROUP, &mreq, sizeof(mreq));    
+    */
+#endif
     while(1) {
       len = recv(fd, buffer, sizeof(buffer), 0);
       
@@ -95,7 +109,7 @@ int main(int argc, char *argv[]) {
       } 
     }
   } else {
-    printf("Failed to create socket: %s\n", strerror(errno));
+    fprintf(stderr, "Failed to create socket: %s\n", strerror(errno));
   }
   return 0;
 }

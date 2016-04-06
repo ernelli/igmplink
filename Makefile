@@ -31,7 +31,7 @@ CXX:=$(TOOLCHAIN_DIR)/bin/$(IPSTB_ARCH)-c++
 CC:=$(TOOLCHAIN_DIR)/bin/$(IPSTB_ARCH)-gcc
 endif
 
-CXXFLAGS+=-std=c99
+#CXXFLAGS+=-std=c99
 
 BUILD:=build/$(IPSTB_ARCH)
 
