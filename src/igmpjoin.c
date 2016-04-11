@@ -83,7 +83,7 @@ int startMulticastStream(const char *address, int port, const char *ifname) {
     return -1;
   }
   
-  printf("got socket: %d\n", fd);
+  //printf("got socket: %d\n", fd);
   
   bind(fd, (struct sockaddr *)&mcaddr, sizeof(mcaddr));    
   
@@ -100,7 +100,7 @@ int startMulticastStream(const char *address, int port, const char *ifname) {
     return -1;
   }
 
-  printf("group joined, wait for data\n");
+//  printf("group joined, wait for data\n");
 
   return fd;
 }
@@ -118,29 +118,53 @@ struct pid_t {
 struct stream_t {
   char address[64]; 
   int fd;
-  
+  long long num_total_bytes;
+  int num_packets;
+  int num_bytes;
   struct pid_t pids[MAX_PIDS];
 };
 
 struct stream_t streams[MAX_STREAMS];
 int num_streams = 0;
 
+timestamp start_time;
 
-int addPacket(struct stream_t *s, unsigned char *packet) {
-
+int addPacket(struct stream_t *s, unsigned char *packet, int len) {
+  s->num_packets++;
+  s->num_total_bytes += len;
+  s->num_bytes += len;
   return 0;
 }
 
-struct stream_t *addStream(int fd) {
+struct stream_t *addStream(int fd, const char *address) {
   struct stream_t *s = NULL;
 
-  while(num_streams < MAX_STREAMS) {
+  if(num_streams < MAX_STREAMS) {
     s = &streams[num_streams++];
     memset(s, 0, sizeof(struct stream_t));
     s->fd = fd;
+    if(address) {
+      strcpy(s->address, address);
+    }
   }
 
   return s;
+}
+
+int printStat() {
+  int i;
+
+  timestamp now = getCurrentTime();
+  
+  double time_elapsed = (now - start_time)/1000.0;
+
+  //printf("\x1b[2J");
+  printf("\x1b[H");
+
+  for(i = 0; i < num_streams; i++) {
+    printf("%2d %s %.3lf, total_bytes: %lld\n", i, streams[i].address, (8.0*(double)streams[i].num_bytes)/time_elapsed, streams[i].num_total_bytes);
+    streams[i].num_bytes = 0;
+  }
 }
 
 int setupSelect(fd_set *rfds, fd_set *efds) {
@@ -166,9 +190,9 @@ int doSelect(int maxfd, fd_set *rfds, fd_set *wfds, fd_set *efds, int timeout) {
 
   int ret = select(1+maxfd, rfds, wfds, efds, &_timeout);
 
-  if(ret == 0) {
-    printf("Select timeout...\n");
-  }
+//  if(ret == 0) {
+//    printf("Select timeout...\n");
+//  }
 
   return ret;
 }
@@ -211,25 +235,16 @@ int main(int argc, char *argv[]) {
     if(!strcmp("-i", argv[narg])) {
       narg++;
       ifname = strarg(narg);
+    } else if(!strcmp("-p", argv[narg])) {
+      port = intarg(narg);
     } else if(!strcmp("-c", argv[narg])) {
       check_cc = 1;
     } else if(!strcmp("-v", argv[narg])) {
       verbose = 1;
     } else {
 
-      switch(ndef++) {
-        case 0:
-          address = strarg(narg);
-          break;
-          
-        case 1:
-          port = intarg(narg);
-          break;
-
-        default:
-          fprintf(stderr, "Unknown argument: %s\n", argv[narg]);      
-          exit(1);
-      }
+      printf("%2d %s", num_streams, argv[narg]);
+      addStream(startMulticastStream(argv[narg], port, ifname), argv[narg]);
     }
     narg++;
   }
@@ -238,37 +253,76 @@ int main(int argc, char *argv[]) {
   fd_set rfds;
   fd_set efds;
 
-  printf("start multicast stream: %s:%d\n", address, port);
-
+  //printf("start multicast stream: %s:%d\n", address, port);
+/*
   fd = startMulticastStream(address, port, ifname);
-  
-  addStream(fd);
+  addStream(fd, address);
+
+  fd = startMulticastStream("239.16.16.232", port, ifname);
+  addStream(fd, address);
+*/
+
+  if(!num_streams) {
+    printf("no streams started\n");
+    exit(1);
+  }
 
   int len;
 
   long long num_bytes = 0;
   
-  timestamp startTime = 0;
-  
-
   //int continutyCounter;
 
-  printf("calling recv on socket\n");
+  start_time = getCurrentTime();
 
   while(1) {
-    int i;
+    int i, num_ready, delay;
+    timestamp now, timeout;
 
-    if(doSelect(setupSelect(&rfds, &efds), &rfds, NULL, &efds, 1000)) {
-      printf("data ready...X\n");
+    now = getCurrentTime();
+
+    delay = (int)(start_time + 1000 - now);
+
+    if(delay <= 0) {
+      printStat();
+      start_time = now;
+    }
+
+    //printf("doSelect, timeout: %d\n", delay);
+
+    if( (num_ready=doSelect(setupSelect(&rfds, &efds), &rfds, NULL, &efds, delay)) > 0) {
+      //printf("data ready, check %d streams\n", num_streams);
       for(i = 0; i < num_streams; i++) {
         if(FD_ISSET(streams[i].fd, &rfds)) {
+          num_ready--;
           len = recv(streams[i].fd, buffer, sizeof(buffer), 0);
-          printf("got %d bytes on socket fd: %d\n", len, streams[i].fd);
+          if(len > 0 ) {
+            addPacket(&streams[i], buffer, len);
+          }
         } else {
-          printf("skip socket: %d\n", i);
+          //printf("skip socket: %d\n", i);
+        }
+        if(num_ready <= 0) {
+          //printf("all streams checked, exit loop\n");
+          break;
         }
       }
-      printf("Socket loop done");
+
+      if(num_ready) {
+        printf("check error fds, num_streams: %d\n", num_streams);
+        for(i = 0; i < num_streams; i++) {
+          if(FD_ISSET(streams[i].fd, &efds)) {
+            num_ready--;
+            printf("error on socket, fd: %d\n", streams[i].fd);
+          } else {
+            printf("skip socket: %d\n", i);
+          }
+          if(num_ready <= 0) {
+            printf("all streams checked for errors, exit loop\n");
+            break;
+          }
+        }
+      }
     }
     
 /*
