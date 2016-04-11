@@ -121,8 +121,9 @@ timestamp _nextTimeout() {
 
 
 void _dumpTimers() {
+  int i;
   printf("num timers: %d\n", num_timers);
-  for(int i = 0; i < num_timers; i++) {
+  for(i = 0; i < num_timers; i++) {
     printf("timer: %d, timeout: %Ld, callback: %016Lx\n", i, timers[i].time, (long long)timers[i].cb);
   }
 }
