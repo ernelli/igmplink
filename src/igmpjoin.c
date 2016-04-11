@@ -151,20 +151,28 @@ struct stream_t *addStream(int fd, const char *address) {
   return s;
 }
 
-int printStat() {
+int check_cc = 0;
+int verbose = 0;
+
+
+void printStat() {
   int i;
 
   timestamp now = getCurrentTime();
   
   double time_elapsed = (now - start_time)/1000.0;
 
+  long long int total_bytes = 0;
+
   //printf("\x1b[2J");
   printf("\x1b[H");
 
   for(i = 0; i < num_streams; i++) {
-    printf("%2d %s %.3lf, total_bytes: %lld\n", i, streams[i].address, (8.0*(double)streams[i].num_bytes)/time_elapsed, streams[i].num_total_bytes);
+    printf("%2d %-15s %.3lf Mbit\n", i, streams[i].address, (8.0*(double)streams[i].num_bytes/(double)1E6)/time_elapsed);
+    total_bytes += streams[i].num_bytes;
     streams[i].num_bytes = 0;
   }
+  printf("Total bitrate: %.3lf Mbit\n", (8.0*(double)total_bytes/(double)1E6)/time_elapsed);
 }
 
 int setupSelect(fd_set *rfds, fd_set *efds) {
@@ -201,13 +209,8 @@ int doSelect(int maxfd, fd_set *rfds, fd_set *wfds, fd_set *efds, int timeout) {
 int main(int argc, char *argv[]) {
   unsigned char buffer[2048];
   int port = 5555;
-  const char *address = "239.16.16.202";
+//  const char *address = "239.16.16.202";
   const char *ifname = "eth0";
-
-  int fd;
-
-  int check_cc = 0;
-  int verbose = 0;
 
   const char *strarg(narg) {
     if(narg < argc) {
@@ -229,7 +232,7 @@ int main(int argc, char *argv[]) {
   }
 
   int narg = 1;
-  int ndef = 0;
+//  int ndef = 0;
 
   while(narg < argc) {
     if(!strcmp("-i", argv[narg])) {
@@ -243,7 +246,7 @@ int main(int argc, char *argv[]) {
       verbose = 1;
     } else {
 
-      printf("%2d %s", num_streams, argv[narg]);
+      printf("%2d %s\n", num_streams, argv[narg]);
       addStream(startMulticastStream(argv[narg], port, ifname), argv[narg]);
     }
     narg++;
@@ -269,15 +272,13 @@ int main(int argc, char *argv[]) {
 
   int len;
 
-  long long num_bytes = 0;
-  
   //int continutyCounter;
 
   start_time = getCurrentTime();
 
   while(1) {
     int i, num_ready, delay;
-    timestamp now, timeout;
+    timestamp now;
 
     now = getCurrentTime();
 
