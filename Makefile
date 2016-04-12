@@ -2,8 +2,10 @@ ARCH:=linux
 #ARCH:=bcm15
 #ARCH:=sh4
 
+#PROFILE=-pg
+
 ifeq ($(ARCH),linux)
-CXXFLAGS:=-Wall
+CXXFLAGS:=-Wall $(PROFILE)
 IPSTB_ARCH:=linux
 DK_VERSION:=
 TOOLCHAIN_DIR:=
@@ -61,10 +63,13 @@ $(BUILD)/igmplisten: $(OBJS)
 	$(CXX) $(LDFLAGS) -o $@ $(BUILD)/igmpclient.o
 
 $(BUILD)/igmpjoin: $(OBJS)
-	$(CXX) $(LDFLAGS) -o $@ $(BUILD)/igmpjoin.o
+	$(CXX) $(LDFLAGS) $(PROFILE) -o $@ $(BUILD)/igmpjoin.o
 
 #$(TARGETS): $(OBJS)
 #	$(CXX) $(LDFLAGS) -o $@ $^  
+
+clean:
+	rm -rf build/*
 
 info:
 	@echo ARCH: $(ARCH)

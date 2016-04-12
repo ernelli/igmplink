@@ -163,6 +163,7 @@ void printStat() {
   double time_elapsed = (now - start_time)/1000.0;
 
   long long int total_bytes = 0;
+  int total_packets = 0;
 
   //printf("\x1b[2J");
   printf("\x1b[H");
@@ -170,22 +171,25 @@ void printStat() {
   for(i = 0; i < num_streams; i++) {
     printf("%2d %-15s %.3lf Mbit\n", i, streams[i].address, (8.0*(double)streams[i].num_bytes/(double)1E6)/time_elapsed);
     total_bytes += streams[i].num_bytes;
+    total_packets += streams[i].num_packets;
     streams[i].num_bytes = 0;
+    streams[i].num_packets = 0;
   }
   printf("Total bitrate: %.3lf Mbit\n", (8.0*(double)total_bytes/(double)1E6)/time_elapsed);
+  printf("Packets per second: %d\n", (int)(total_packets/time_elapsed));
 }
 
 int setupSelect(fd_set *rfds, fd_set *efds) {
   int i, maxfd = 0;
   FD_ZERO(rfds);
-  FD_ZERO(efds);
+//  FD_ZERO(efds);
 
   for(i = 0; i < num_streams; i++) {
     if(streams[i].fd > maxfd) {
       maxfd = streams[i].fd;
     }
     FD_SET(streams[i].fd, rfds);
-    FD_SET(streams[i].fd, efds);
+//    FD_SET(streams[i].fd, efds);
   }
   return maxfd;
 }
@@ -206,9 +210,32 @@ int doSelect(int maxfd, fd_set *rfds, fd_set *wfds, fd_set *efds, int timeout) {
 }
 
 
-int main(int argc, char *argv[]) {
+int doRecv(struct stream_t *s) {
   unsigned char buffer[2048];
+  int len;
+#ifdef RECV_MMSG
+          
+#else
+
+
+          do {
+            len = recv(s->fd, buffer, sizeof(buffer), MSG_DONTWAIT);
+            if(len > 0 ) {
+              addPacket(s, buffer, len);
+            } else {
+              return -1;
+            }
+          } while(len > 0);
+#endif
+          return 0;
+}
+
+int main(int argc, char *argv[]) {
+
   int port = 5555;
+  int running_time = 0;
+  timestamp stop_time = 0;
+
 //  const char *address = "239.16.16.202";
   const char *ifname = "eth0";
 
@@ -244,6 +271,9 @@ int main(int argc, char *argv[]) {
       check_cc = 1;
     } else if(!strcmp("-v", argv[narg])) {
       verbose = 1;
+    } else if(!strcmp("-t", argv[narg])) {
+      narg++;
+      running_time = intarg(narg);
     } else {
 
       printf("%2d %s\n", num_streams, argv[narg]);
@@ -255,6 +285,10 @@ int main(int argc, char *argv[]) {
 
   fd_set rfds;
   fd_set efds;
+
+  fd_set _ref_fds;
+
+  //printf("sizeof fdset: %d\n", sizeof(rfds));
 
   //printf("start multicast stream: %s:%d\n", address, port);
 /*
@@ -270,17 +304,36 @@ int main(int argc, char *argv[]) {
     exit(1);
   }
 
-  int len;
-
   //int continutyCounter;
 
   start_time = getCurrentTime();
+
+  if(running_time) {
+    stop_time = start_time + 1000*running_time;
+  }
+
+  int max_fds = setupSelect(&_ref_fds, NULL);
+
+  timestamp dt_pre = 0;
+  //timestamp dt_select = 0;
+  timestamp dt_recv = 0;
+
 
   while(1) {
     int i, num_ready, delay;
     timestamp now;
 
     now = getCurrentTime();
+
+    if(stop_time) {
+      if(now >= stop_time) {
+
+//        printf("time spend in dt_pre: %lld\n", dt_pre);
+//        printf("time spend in dt_rect: %lld\n", dt_recv);
+        
+        return 0;
+      }
+    }
 
     delay = (int)(start_time + 1000 - now);
 
@@ -291,15 +344,24 @@ int main(int argc, char *argv[]) {
 
     //printf("doSelect, timeout: %d\n", delay);
 
-    if( (num_ready=doSelect(setupSelect(&rfds, &efds), &rfds, NULL, &efds, delay)) > 0) {
+    memcpy(&rfds, &_ref_fds, sizeof(rfds));
+    memcpy(&efds, &_ref_fds, sizeof(rfds));
+
+
+    dt_pre += now - getCurrentTime();
+
+    if( (num_ready=doSelect(max_fds, &rfds, NULL, NULL, delay)) > 0) {
       //printf("data ready, check %d streams\n", num_streams);
+
+
+      now = getCurrentTime();
+
       for(i = 0; i < num_streams; i++) {
         if(FD_ISSET(streams[i].fd, &rfds)) {
           num_ready--;
-          len = recv(streams[i].fd, buffer, sizeof(buffer), 0);
-          if(len > 0 ) {
-            addPacket(&streams[i], buffer, len);
-          }
+
+          doRecv(&streams[i]);
+
         } else {
           //printf("skip socket: %d\n", i);
         }
@@ -309,6 +371,9 @@ int main(int argc, char *argv[]) {
         }
       }
 
+      dt_recv += getCurrentTime() - now;
+      
+#if 0     
       if(num_ready) {
         printf("check error fds, num_streams: %d\n", num_streams);
         for(i = 0; i < num_streams; i++) {
@@ -324,6 +389,7 @@ int main(int argc, char *argv[]) {
           }
         }
       }
+#endif
     }
     
 /*
