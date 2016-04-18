@@ -106,7 +106,7 @@ int startMulticastStream(const char *address, int port, const char *ifname) {
 }
 
 #define MAX_STREAMS 256
-#define MAX_PIDS 8
+#define MAX_PIDS 16
 
 struct pid_t {
   int pid;
@@ -121,6 +121,9 @@ struct stream_t {
   long long num_total_bytes;
   int num_packets;
   int num_bytes;
+  int num_cc_error;
+  int num_invalid;
+  int analysis_error;
   struct pid_t pids[MAX_PIDS];
 };
 
@@ -129,10 +132,63 @@ int num_streams = 0;
 
 timestamp start_time;
 
+int check_cc = 0;
+int verbose = 0;
+
 int addPacket(struct stream_t *s, unsigned char *packet, int len) {
   s->num_packets++;
   s->num_total_bytes += len;
   s->num_bytes += len;
+
+  if(check_cc && !s->analysis_error) {
+    const unsigned char *msg = packet;
+    const unsigned char *end = packet + len - 4;
+
+    int pid, cc, afe;
+
+    while(msg < end) {
+      if(*msg == 0x47) {
+
+        pid = (msg[1] & 0x1f) << 8 | (msg[2] & 0xff);        
+        cc = msg[3] & 0xf;        
+        afe = (msg[3] >> 4) & 0x3;        
+
+        if(pid != 0) {
+          int pid_index = 0;
+          while(s->pids[pid_index].pid != pid && s->pids[pid_index].pid) {
+            pid_index++;
+            if(pid_index >= MAX_PIDS) {
+              s->analysis_error = 1;
+              fprintf(stderr, "Max number of PIDS reached for stream: %s\n", s->address);
+              return 0;
+            }
+          }
+          if(!s->pids[pid_index].pid) {
+            if(verbose) {
+              printf("new pid %04x detected on stream: %s\n", pid, s->address);
+            }
+            s->pids[pid_index].pid = pid;
+          } else if(pid != 0x1fff && (afe & 0x1) ) { // NULL packets does not use cc, and non payload packets does not increment cc
+            if( ((s->pids[pid_index].cc + 1) & 0xf) != cc) {
+              if(verbose) {
+                printf("Continuty counter error on pid %04x detected on stream: %s, expected: %d got %d\n", pid, s->address, (s->pids[pid_index].cc + 1) & 0xf, cc);
+              }
+              s->num_cc_error++;
+            }
+          }
+
+          //          if(msg[50] == 0x49 && msg[51] == 0x63)  {
+          //          } else {
+            s->pids[pid_index].cc = cc;
+          //          }
+        }
+      } else {
+        s->num_invalid++;
+      }
+      msg += 188;
+    }
+
+  }
   return 0;
 }
 
@@ -151,32 +207,57 @@ struct stream_t *addStream(int fd, const char *address) {
   return s;
 }
 
-int check_cc = 0;
-int verbose = 0;
-
+timestamp cc_reset_time = 0;
 
 void printStat() {
   int i;
 
   timestamp now = getCurrentTime();
   
+  if(!cc_reset_time) {
+    cc_reset_time = now + 10*1000;
+  }
+
   double time_elapsed = (now - start_time)/1000.0;
 
   long long int total_bytes = 0;
   int total_packets = 0;
 
+  int total_cc_errors = 0;
+  int error_streams = 0;
+
   //printf("\x1b[2J");
-  printf("\x1b[H");
+  if(!verbose) {
+    printf("\x1b[H");
+  }
 
   for(i = 0; i < num_streams; i++) {
-    printf("%2d %-15s %.3lf Mbit\n", i, streams[i].address, (8.0*(double)streams[i].num_bytes/(double)1E6)/time_elapsed);
+    printf("%2d %-15s %.3lf Mbit", i, streams[i].address, (8.0*(double)streams[i].num_bytes/(double)1E6)/time_elapsed);
     total_bytes += streams[i].num_bytes;
     total_packets += streams[i].num_packets;
     streams[i].num_bytes = 0;
     streams[i].num_packets = 0;
+
+    if(streams[i].num_cc_error) {
+      printf(" cc errors: %d", streams[i].num_cc_error);
+      total_cc_errors += streams[i].num_cc_error;
+      error_streams++;
+
+      if(now > cc_reset_time) {
+        streams[i].num_cc_error = 0;
+      }
+    }
+    printf("\x1b[K\n");
   }
-  printf("Total bitrate: %.3lf Mbit\n", (8.0*(double)total_bytes/(double)1E6)/time_elapsed);
-  printf("Packets per second: %d\n", (int)(total_packets/time_elapsed));
+
+  if(now > cc_reset_time) {
+    cc_reset_time = now + 10*1000;
+  }
+
+  printf("Total bitrate: %.3lf Mbit\x1b[K\n", (8.0*(double)total_bytes/(double)1E6)/time_elapsed);
+  printf("Packets per second: %d\x1b[K\n", (int)(total_packets/time_elapsed));
+  printf("Total cc errors: %d\x1b[K\n", total_cc_errors);
+  printf("Number of erroneous streams: %d\x1b[K\n", error_streams);
 }
 
 int setupSelect(fd_set *rfds, fd_set *efds) {
@@ -243,7 +324,7 @@ int main(int argc, char *argv[]) {
     if(narg < argc) {
       return argv[narg];
     }
-    fprintf(stderr, "string expected\n");
+    fprintf(stderr, "string expected for %s\n", argv[narg-1]);
     exit(1);
   }
 
@@ -254,7 +335,7 @@ int main(int argc, char *argv[]) {
         return val;
       }
     }
-    fprintf(stderr, "integer expected: %s\n", argv[narg]);
+    fprintf(stderr, "integer expected for %s\n", argv[narg-1]);
     exit(1);
   }
 
@@ -274,6 +355,20 @@ int main(int argc, char *argv[]) {
     } else if(!strcmp("-t", argv[narg])) {
       narg++;
       running_time = intarg(narg);
+    } else if(!strcmp("-f", argv[narg])) {
+      narg++;
+      FILE *fp = fopen(strarg(narg), "r");
+      if(fp) {
+        while(!feof(fp)) {
+          char addr[40];
+          if(fscanf(fp, "%40s", addr) == 1) {
+            printf("%2d %s\n", num_streams, addr);
+            addStream(startMulticastStream(addr, port, ifname), addr);
+          }
+        }
+      } else {
+        fprintf(stderr, "Failed to open file: %s\n%s", argv[narg], strerror(errno));
+      }
     } else {
 
       printf("%2d %s\n", num_streams, argv[narg]);
@@ -318,6 +413,7 @@ int main(int argc, char *argv[]) {
   //timestamp dt_select = 0;
   timestamp dt_recv = 0;
 
+  printf("\x1b[2J");
 
   while(1) {
     int i, num_ready, delay;
